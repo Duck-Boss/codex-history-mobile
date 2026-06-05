@@ -19,6 +19,7 @@ HOME = Path.home()
 CODEX_HOME = Path(os.environ.get("CODEX_HOME", HOME / ".codex"))
 STATE_DB = CODEX_HOME / "state_5.sqlite"
 TOKEN_FILE = Path(__file__).with_name("token.txt")
+APP_VERSION = "0.1.0-cli"
 DEFAULT_CODEX_BIN = HOME / ".local" / "bin" / "codex"
 CODEX_BIN = os.environ.get("CODEX_BIN") or (str(DEFAULT_CODEX_BIN) if DEFAULT_CODEX_BIN.exists() else "codex")
 APP_SERVER_SOCK = CODEX_HOME / "app-server-control" / "app-server-control.sock"
@@ -696,7 +697,7 @@ class AppServerClient:
         self.request(
             "initialize",
             {
-                "clientInfo": {"name": "codex-mobile", "title": "Codex Mobile", "version": "0.1"},
+                "clientInfo": {"name": "codex-mobile", "title": "Codex Mobile", "version": APP_VERSION},
                 "capabilities": {
                     "experimentalApi": True,
                     "requestAttestation": False,

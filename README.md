@@ -1,5 +1,7 @@
 # Codex Mobile
 
+当前版本：`0.1.0-cli`
+
 Codex Mobile 是一个轻量级网页桥，用手机浏览器查看本机 Codex 会话历史，并把手机输入作为新的 Codex 指令发送到同一个会话里。
 
 它适合这种场景：
@@ -8,6 +10,52 @@ Codex Mobile 是一个轻量级网页桥，用手机浏览器查看本机 Codex 
 - 手机打开公开链接，选择 Codex 会话，查看历史和发送指令。
 - 手机端发送的指令写入同一套 `~/.codex` 会话记录；之后重新打开 VS Code/Codex 会话，可以看到手机端产生的历史。
 - 可选通过 Cloudflare Tunnel 暴露公网访问地址。
+
+## 版本说明
+
+这个仓库当前整理的是 **CLI shared-history 版**，不是 VS Code 扩展打包版。
+
+它的发送链路是：
+
+```text
+手机网页输入
+→ 本地 Python server
+→ codex exec resume <session_id> -
+→ 写入 ~/.codex 会话历史
+```
+
+它也会尝试读取 Codex app-server/remote-control 的当前加载会话，用来判断 VS Code/Codex 当前打开的是哪个 session。但手机端真正发送消息时，仍然走 Codex CLI，不是操作 VS Code 输入框，也不是 VS Code extension API。
+
+### CLI 版
+
+- 版本：`0.1.0-cli`
+- 入口：`server.py`
+- 后端执行：`codex exec resume`
+- 会话来源：`~/.codex/state_5.sqlite` 和 `~/.codex/sessions`
+- 适合：服务器、SSH、长期后台运行、手机公网访问
+
+### VS Code / Extension 兼容说明
+
+当前代码只做两件与 VS Code/Codex 扩展相关的事：
+
+- 通过 app-server remote-control 查询当前加载的 thread id。
+- 手机重新打开时优先选择当前 VS Code/Codex 加载的会话。
+
+它不是 VS Code 插件包，没有 `package.json`、extension host、webview contribution 或 marketplace 发布配置。如果以后要做 VS Code extension edition，建议单独建 `vscode-extension/` 子项目。
+
+建议后续多版本目录结构：
+
+```text
+.
+├── cli/
+│   └── 当前 server.py 这一套逻辑
+├── vscode-extension/
+│   └── 未来 VS Code 插件实现
+└── shared/
+    └── 可复用协议、类型和文档
+```
+
+当前仓库暂时没有拆目录，是为了保持部署路径简单；`0.1.0-cli` 就是现在这套单目录 CLI 版。
 
 ## 安全警告
 
@@ -229,4 +277,3 @@ loginctl show-user "$USER" -p Linger
 ### URL 变了
 
 quick tunnel 是临时 URL。需要固定 URL，请使用 Cloudflare named tunnel 或自己的反向代理。
-
