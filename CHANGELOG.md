@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1-cli-vscode-compatible
+
+Documentation and version-label update.
+
+- Clarifies that this edition is compatible with both Codex CLI and VS Code/Codex session history.
+- States explicitly that execution still uses `codex exec resume`.
+- States explicitly that VS Code compatibility means current-session detection and shared-history visibility, not a packaged VS Code extension.
+
 ## 0.1.0-cli
 
 Initial CLI shared-history edition.

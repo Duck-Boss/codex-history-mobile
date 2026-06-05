@@ -1,6 +1,8 @@
 # Codex Mobile
 
-当前版本：`0.1.0-cli`
+当前版本：`0.1.1-cli-vscode-compatible`
+
+版本定位：**CLI + VS Code 兼容版**
 
 Codex Mobile 是一个轻量级网页桥，用手机浏览器查看本机 Codex 会话历史，并把手机输入作为新的 Codex 指令发送到同一个会话里。
 
@@ -13,7 +15,9 @@ Codex Mobile 是一个轻量级网页桥，用手机浏览器查看本机 Codex 
 
 ## 版本说明
 
-这个仓库当前整理的是 **CLI shared-history 版**，不是 VS Code 扩展打包版。
+这个仓库当前整理的是 **CLI + VS Code 兼容版**。
+
+它不是 VS Code 扩展打包版，但兼容 VS Code/Codex 扩展的会话历史：手机端发送的内容写入同一套 `~/.codex` 会话记录，VS Code/Codex 重新打开对应会话后可以看到这些历史。
 
 它的发送链路是：
 
@@ -26,22 +30,23 @@ Codex Mobile 是一个轻量级网页桥，用手机浏览器查看本机 Codex 
 
 它也会尝试读取 Codex app-server/remote-control 的当前加载会话，用来判断 VS Code/Codex 当前打开的是哪个 session。但手机端真正发送消息时，仍然走 Codex CLI，不是操作 VS Code 输入框，也不是 VS Code extension API。
 
-### CLI 版
+### CLI 兼容
 
-- 版本：`0.1.0-cli`
+- 版本：`0.1.1-cli-vscode-compatible`
 - 入口：`server.py`
 - 后端执行：`codex exec resume`
 - 会话来源：`~/.codex/state_5.sqlite` 和 `~/.codex/sessions`
 - 适合：服务器、SSH、长期后台运行、手机公网访问
 
-### VS Code / Extension 兼容说明
+### VS Code 兼容
 
-当前代码只做两件与 VS Code/Codex 扩展相关的事：
+当前代码与 VS Code/Codex 扩展的兼容方式：
 
 - 通过 app-server remote-control 查询当前加载的 thread id。
 - 手机重新打开时优先选择当前 VS Code/Codex 加载的会话。
+- 手机端发送结果写入 `~/.codex` 历史，VS Code/Codex 重新打开同一会话后可读取到。
 
-它不是 VS Code 插件包，没有 `package.json`、extension host、webview contribution 或 marketplace 发布配置。如果以后要做 VS Code extension edition，建议单独建 `vscode-extension/` 子项目。
+它仍然不是 VS Code 插件包，没有 `package.json`、extension host、webview contribution 或 marketplace 发布配置。如果以后要做完整 VS Code extension edition，建议单独建 `vscode-extension/` 子项目。
 
 建议后续多版本目录结构：
 
@@ -55,7 +60,7 @@ Codex Mobile 是一个轻量级网页桥，用手机浏览器查看本机 Codex 
     └── 可复用协议、类型和文档
 ```
 
-当前仓库暂时没有拆目录，是为了保持部署路径简单；`0.1.0-cli` 就是现在这套单目录 CLI 版。
+当前仓库暂时没有拆目录，是为了保持部署路径简单；`0.1.1-cli-vscode-compatible` 就是现在这套单目录 CLI + VS Code 兼容版。
 
 ## 安全警告
 
