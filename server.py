@@ -11,6 +11,7 @@ import subprocess
 import threading
 import time
 import urllib.parse
+import shutil
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -21,13 +22,53 @@ STATE_DB = CODEX_HOME / "state_5.sqlite"
 TOKEN_FILE = Path(__file__).with_name("token.txt")
 APP_VERSION = "0.1.1-cli-vscode-compatible"
 DEFAULT_CODEX_BIN = HOME / ".local" / "bin" / "codex"
-CODEX_BIN = os.environ.get("CODEX_BIN") or (str(DEFAULT_CODEX_BIN) if DEFAULT_CODEX_BIN.exists() else "codex")
+
+
+def find_codex_bin():
+    env_bin = os.environ.get("CODEX_BIN")
+    if env_bin:
+        return env_bin
+    candidates = [
+        DEFAULT_CODEX_BIN,
+        HOME / ".nvm" / "current" / "bin" / "codex",
+        HOME / ".local" / "share" / "npm" / "bin" / "codex",
+        HOME / ".npm-global" / "bin" / "codex",
+        HOME / ".bun" / "bin" / "codex",
+        Path("/usr/local/bin/codex"),
+        Path("/opt/homebrew/bin/codex"),
+    ]
+    nvm_versions = HOME / ".nvm" / "versions" / "node"
+    if nvm_versions.exists():
+        candidates.extend(
+            sorted(
+                nvm_versions.glob("*/bin/codex"),
+                key=lambda p: p.stat().st_mtime if p.exists() else 0,
+                reverse=True,
+            )
+        )
+    for candidate in candidates:
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    path_bin = shutil.which("codex")
+    return path_bin or "codex"
+
+
+CODEX_BIN = find_codex_bin()
 APP_SERVER_SOCK = CODEX_HOME / "app-server-control" / "app-server-control.sock"
 JOB_OUTPUT_DIR = Path(__file__).with_name("job_outputs")
 JOBS = {}
 JOBS_LOCK = threading.Lock()
 INPUTBOX_QUEUE = []
 INPUTBOX_LOCK = threading.Lock()
+
+
+def codex_env():
+    env = os.environ.copy()
+    codex_dir = str(Path(CODEX_BIN).expanduser().parent)
+    current_path = env.get("PATH", "")
+    env["PATH"] = codex_dir + (os.pathsep + current_path if current_path else "")
+    env["CODEX_BIN"] = CODEX_BIN
+    return env
 
 
 INDEX_HTML = r"""<!doctype html>
@@ -62,7 +103,7 @@ INDEX_HTML = r"""<!doctype html>
     }
     .app {
       display: grid;
-      grid-template-columns: 320px 1fr;
+      grid-template-columns: minmax(520px, var(--sidebar-width, 44vw)) minmax(0, 1fr);
       height: 100vh;
       height: 100dvh;
       min-height: 0;
@@ -71,8 +112,19 @@ INDEX_HTML = r"""<!doctype html>
       background: #eef1f5;
       border-right: 1px solid var(--line);
       min-height: 0;
+      min-width: 0;
       display: flex;
       flex-direction: column;
+      position: relative;
+    }
+    .sidebar-resizer {
+      position: absolute;
+      top: 0;
+      right: -4px;
+      width: 8px;
+      height: 100%;
+      cursor: col-resize;
+      z-index: 2;
     }
     header {
       height: 58px;
@@ -95,44 +147,132 @@ INDEX_HTML = r"""<!doctype html>
       font-size: 12px;
       white-space: nowrap;
     }
+    .side-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .side-refresh {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--accent-2);
+      font-size: 14px;
+      display: inline-grid;
+      place-items: center;
+      padding: 0;
+      appearance: none;
+    }
     .sessions {
       overflow: auto;
-      padding: 8px;
+      padding: 10px;
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 10px;
+      min-width: 0;
     }
     .session {
       width: 100%;
-      min-height: 66px;
+      min-height: 132px;
       border: 1px solid transparent;
       border-radius: 8px;
       background: transparent;
       text-align: left;
-      padding: 9px;
+      padding: 14px 46px 14px 14px;
       color: var(--text);
-      display: grid;
-      gap: 4px;
+      display: block;
+      position: relative;
+      cursor: pointer;
+      overflow: visible;
+      touch-action: pan-y;
+    }
+    .session.hiding {
+      opacity: .35;
+      transform: translateX(-28px);
+      transition: opacity .16s ease, transform .16s ease;
     }
     .session.active {
       border-color: #94bdb8;
       background: #ffffff;
     }
     .session .title {
-      font-size: 14px;
-      line-height: 1.25;
+      font-size: 15px;
+      line-height: 1.5;
       font-weight: 650;
+      overflow-wrap: anywhere;
+      word-break: break-word;
       overflow: hidden;
       display: -webkit-box;
       -webkit-line-clamp: 2;
       -webkit-box-orient: vertical;
     }
     .session .meta {
-      font-size: 11px;
+      font-size: 12px;
       color: var(--muted);
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      line-height: 1.5;
       overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+    .session .time {
+      -webkit-line-clamp: 1;
+    }
+    .session-main {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-width: 0;
+    }
+    .session-actions {
+      display: grid;
+      gap: 4px;
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      width: 24px;
+    }
+    .session-action {
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--accent-2);
+      font-size: 12px;
+      line-height: 1;
+      padding: 0;
+      display: inline-grid;
+      place-items: center;
+      appearance: none;
+    }
+    .session-action.done {
+      border-color: #99c2bd;
+      background: #edfdfa;
+      color: #115e59;
+    }
+    .session-group {
+      width: 100%;
+      margin-top: 20px;
+      padding: 10px 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+      text-align: left;
+      appearance: none;
+    }
+    .session.hidden-card {
+      opacity: .72;
+      background: #f8fafc;
+      border-style: dashed;
     }
     main {
       min-width: 0;
@@ -199,12 +339,12 @@ INDEX_HTML = r"""<!doctype html>
       max-width: min(780px, 92%);
       border: 1px solid var(--line);
       border-radius: 8px;
-      padding: 10px 12px;
+      padding: 10px 40px 10px 12px;
       background: var(--assistant);
-      white-space: pre-wrap;
       overflow-wrap: anywhere;
       line-height: 1.45;
       font-size: 14px;
+      position: relative;
     }
     .msg.user {
       align-self: flex-end;
@@ -220,12 +360,129 @@ INDEX_HTML = r"""<!doctype html>
       background: #fff1f2;
       border-color: #fecdd3;
     }
+    .msg .content {
+      display: block;
+      white-space: normal;
+    }
+    .content p {
+      margin: 0 0 9px;
+    }
+    .content p:last-child,
+    .content pre:last-child,
+    .content ul:last-child,
+    .content ol:last-child,
+    .content blockquote:last-child {
+      margin-bottom: 0;
+    }
+    .content h1,
+    .content h2,
+    .content h3 {
+      margin: 12px 0 8px;
+      line-height: 1.25;
+    }
+    .content h1 { font-size: 20px; }
+    .content h2 { font-size: 17px; }
+    .content h3 { font-size: 15px; }
+    .content pre {
+      margin: 8px 0;
+      padding: 10px;
+      border-radius: 8px;
+      background: #111827;
+      color: #e5e7eb;
+      overflow: auto;
+      white-space: pre;
+      font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    .content code {
+      border-radius: 5px;
+      background: #eef1f5;
+      padding: 1px 5px;
+      font: .92em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    .content pre code {
+      background: transparent;
+      padding: 0;
+      font: inherit;
+    }
+    .content ul,
+    .content ol {
+      margin: 7px 0 10px;
+      padding-left: 22px;
+    }
+    .content li { margin: 3px 0; }
+    .content blockquote {
+      margin: 8px 0;
+      padding: 2px 0 2px 10px;
+      border-left: 3px solid #94bdb8;
+      color: #475467;
+    }
+    .content a {
+      color: #0f766e;
+      text-decoration: underline;
+      overflow-wrap: anywhere;
+    }
+    .content .table-wrap {
+      max-width: 100%;
+      overflow-x: auto;
+      margin: 8px 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+    .content table {
+      width: 100%;
+      min-width: 420px;
+      border-collapse: collapse;
+      font-size: 13px;
+      white-space: normal;
+    }
+    .content th,
+    .content td {
+      border-bottom: 1px solid var(--line);
+      border-right: 1px solid var(--line);
+      padding: 7px 9px;
+      text-align: left;
+      vertical-align: top;
+    }
+    .content th:last-child,
+    .content td:last-child {
+      border-right: 0;
+    }
+    .content tr:last-child td {
+      border-bottom: 0;
+    }
+    .content th {
+      background: #eef1f5;
+      font-weight: 750;
+    }
     .msg .role {
       display: block;
       font-size: 11px;
       color: var(--muted);
       margin-bottom: 5px;
       font-weight: 700;
+    }
+    .msg-copy {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.88);
+      color: var(--accent-2);
+      font-size: 12px;
+      line-height: 1;
+      padding: 0;
+      display: inline-grid;
+      place-items: center;
+      appearance: none;
+    }
+    .msg-copy.done {
+      border-color: #99c2bd;
+      background: #edfdfa;
+      color: #115e59;
     }
     .composer {
       border-top: 1px solid var(--line);
@@ -285,12 +542,13 @@ INDEX_HTML = r"""<!doctype html>
       aside {
         position: fixed;
         inset: 0 auto 0 0;
-        width: min(86vw, 340px);
+        width: 100vw;
         z-index: 10;
         transform: translateX(-100%);
         transition: transform .18s ease;
         box-shadow: 8px 0 24px rgba(17,24,39,.18);
       }
+      .sidebar-resizer { display: none; }
       aside.open { transform: translateX(0); }
       .mobile-menu { display: block; }
       .toolbar {
@@ -323,10 +581,14 @@ INDEX_HTML = r"""<!doctype html>
   <div class="app">
     <aside id="sidebar">
       <header>
-        <h1>Codex Mobile</h1>
+        <div class="side-head">
+          <h1>Codex Mobile</h1>
+          <button class="side-refresh" id="sessionRefreshBtn" type="button" title="刷新目录">↻</button>
+        </div>
         <span class="status" id="sessionCount">加载中</span>
       </header>
       <div class="sessions" id="sessions"></div>
+      <div class="sidebar-resizer" id="sidebarResizer"></div>
     </aside>
     <main>
       <div class="toolbar">
@@ -364,8 +626,13 @@ INDEX_HTML = r"""<!doctype html>
     let uiEvents = [];
     let lastRenderedItems = [];
     let lastRefreshError = "";
+    let hiddenSessionIds = new Set(JSON.parse(localStorage.getItem("codexMobileHiddenSessions") || "[]"));
+    let titleOverrides = JSON.parse(localStorage.getItem("codexMobileSessionTitles") || "{}");
+    let hiddenPanelOpen = localStorage.getItem("codexMobileHiddenPanelOpen") === "1";
     const qs = (s) => document.querySelector(s);
     const api = (path, opts = {}) => fetch(path + (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token), opts);
+    const savedSidebarWidth = localStorage.getItem("codexMobileSidebarWidth");
+    if (savedSidebarWidth) document.documentElement.style.setProperty("--sidebar-width", savedSidebarWidth);
 
     function fmt(ts) {
       if (!ts) return "";
@@ -376,13 +643,102 @@ INDEX_HTML = r"""<!doctype html>
       const t = (s || "").replace(/\s+/g, " ").trim();
       return t.length > n ? t.slice(0, n - 1) + "…" : t;
     }
+    function shellQuote(value) {
+      return "'" + String(value || "").replace(/'/g, "'\\''") + "'";
+    }
+    function resumeCommand(sessionId) {
+      return "codex resume " + shellQuote(sessionId);
+    }
+    function sessionTitle(s) {
+      return titleOverrides[s.id] || s.title || s.preview || s.id;
+    }
+    function saveTitleOverrides() {
+      localStorage.setItem("codexMobileSessionTitles", JSON.stringify(titleOverrides));
+    }
+    async function renameSession(sessionId, currentTitle) {
+      const nextTitle = window.prompt("修改会话标题", currentTitle || "");
+      if (nextTitle === null) return;
+      const title = nextTitle.trim();
+      if (!title) return;
+      titleOverrides[sessionId] = title;
+      saveTitleOverrides();
+      const item = sessions.find(s => s.id === sessionId);
+      if (item) item.title = title;
+      renderSessions();
+      if (sessionId === activeId) qs("#threadTitle").textContent = title;
+      const res = await api("/api/session/title", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({session_id: sessionId, title})
+      });
+      if (!res.ok) {
+        addUiError("标题已保存在手机本地，但写入 Codex 历史库失败：" + await res.text());
+        return;
+      }
+      await loadSessions();
+    }
+    async function copyText(text) {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+      const el = document.createElement("textarea");
+      el.value = text;
+      el.setAttribute("readonly", "");
+      el.style.position = "fixed";
+      el.style.opacity = "0";
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand("copy");
+      document.body.removeChild(el);
+    }
+    function saveHiddenSessions() {
+      localStorage.setItem("codexMobileHiddenSessions", JSON.stringify([...hiddenSessionIds]));
+    }
+    function hideSession(sessionId) {
+      hiddenSessionIds.add(sessionId);
+      saveHiddenSessions();
+      if (activeId === sessionId) {
+        const next = sessions.find(s => !hiddenSessionIds.has(s.id));
+        activeId = next ? next.id : "";
+        if (activeId) localStorage.setItem("codexMobileSession", activeId);
+      }
+      renderSessions();
+      forceScrollBottom = true;
+      loadMessages();
+    }
     function renderSessions() {
-      qs("#sessionCount").textContent = sessions.length + " 个会话";
-      qs("#sessions").innerHTML = sessions.map(s => `
-        <button class="session ${s.id === activeId ? "active" : ""}" data-id="${s.id}">
-          <span class="title">${escapeHtml(textOf(s.title || s.preview || s.id, 62))}</span>
-          <span class="meta">${escapeHtml((s.id === currentSessionId ? "当前窗口 · " : "") + fmt(s.updated_at_ms) + " · " + (s.cwd || ""))}</span>
-        </button>`).join("");
+      const visibleSessions = sessions.filter(s => !hiddenSessionIds.has(s.id));
+      const hiddenSessions = sessions.filter(s => hiddenSessionIds.has(s.id));
+      const hiddenCount = sessions.length - visibleSessions.length;
+      qs("#sessionCount").textContent = visibleSessions.length + " 个会话" + (hiddenCount ? " · 隐藏 " + hiddenCount : "");
+      const visibleHtml = visibleSessions.map(s => `
+        <div class="session ${s.id === activeId ? "active" : ""}" data-id="${s.id}">
+          <div class="session-main">
+            <div class="title">${escapeHtml(sessionTitle(s))}</div>
+            <div class="meta time">${escapeHtml((s.id === currentSessionId ? "当前窗口 · " : "") + fmt(s.updated_at_ms))}</div>
+            <div class="meta" title="${escapeHtml(s.cwd || "")}">${escapeHtml(s.cwd || "")}</div>
+          </div>
+          <div class="session-actions">
+            <button class="session-action copy-resume" type="button" data-copy-id="${escapeHtml(s.id)}" title="复制 resume 命令">⧉</button>
+            <button class="session-action rename-session" type="button" data-rename-id="${escapeHtml(s.id)}" data-title="${escapeHtml(sessionTitle(s))}" title="修改标题">✎</button>
+          </div>
+        </div>`).join("");
+      const hiddenHtml = hiddenSessions.length ? `
+        <button class="session-group" id="hiddenToggle" type="button">隐藏对话 ${hiddenSessions.length} ${hiddenPanelOpen ? "收起" : "展开"}</button>
+        ${hiddenPanelOpen ? hiddenSessions.map(s => `
+          <div class="session hidden-card" data-id="${s.id}">
+            <div class="session-main">
+              <div class="title">${escapeHtml(sessionTitle(s))}</div>
+              <div class="meta time">${escapeHtml(fmt(s.updated_at_ms))}</div>
+              <div class="meta" title="${escapeHtml(s.cwd || "")}">${escapeHtml(s.cwd || "")}</div>
+            </div>
+            <div class="session-actions">
+              <button class="session-action restore-session" type="button" data-restore-id="${escapeHtml(s.id)}" title="恢复显示">↩</button>
+              <button class="session-action copy-resume" type="button" data-copy-id="${escapeHtml(s.id)}" title="复制 resume 命令">⧉</button>
+            </div>
+          </div>`).join("") : ""}` : "";
+      qs("#sessions").innerHTML = visibleHtml + hiddenHtml;
       document.querySelectorAll(".session").forEach(b => b.onclick = () => {
         activeId = b.dataset.id;
         localStorage.setItem("codexMobileSession", activeId);
@@ -390,6 +746,75 @@ INDEX_HTML = r"""<!doctype html>
         renderSessions();
         forceScrollBottom = true;
         loadMessages();
+      });
+      const hiddenToggle = qs("#hiddenToggle");
+      if (hiddenToggle) hiddenToggle.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        hiddenPanelOpen = !hiddenPanelOpen;
+        localStorage.setItem("codexMobileHiddenPanelOpen", hiddenPanelOpen ? "1" : "0");
+        renderSessions();
+      };
+      document.querySelectorAll(".session").forEach(card => {
+        if (hiddenSessionIds.has(card.dataset.id)) return;
+        let startX = 0;
+        let startY = 0;
+        let swiping = false;
+        card.addEventListener("touchstart", e => {
+          const t = e.touches[0];
+          startX = t.clientX;
+          startY = t.clientY;
+          swiping = true;
+        }, {passive: true});
+        card.addEventListener("touchmove", e => {
+          if (!swiping) return;
+          const t = e.touches[0];
+          const dx = t.clientX - startX;
+          const dy = t.clientY - startY;
+          if (dx < -56 && Math.abs(dx) > Math.abs(dy) * 1.4) {
+            card.classList.add("hiding");
+          }
+        }, {passive: true});
+        card.addEventListener("touchend", e => {
+          if (!swiping) return;
+          swiping = false;
+          const t = e.changedTouches[0];
+          const dx = t.clientX - startX;
+          const dy = t.clientY - startY;
+          if (dx < -72 && Math.abs(dx) > Math.abs(dy) * 1.4) {
+            hideSession(card.dataset.id);
+          } else {
+            card.classList.remove("hiding");
+          }
+        }, {passive: true});
+      });
+      document.querySelectorAll(".copy-resume").forEach(btn => btn.onclick = async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const cmd = resumeCommand(btn.dataset.copyId);
+        try {
+          await copyText(cmd);
+          btn.classList.add("done");
+          btn.textContent = "✓";
+          setTimeout(() => {
+            btn.classList.remove("done");
+            btn.textContent = "⧉";
+          }, 1200);
+        } catch (err) {
+          addUiError("复制失败：" + (err.message || String(err)));
+        }
+      });
+      document.querySelectorAll(".rename-session").forEach(btn => btn.onclick = async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        await renameSession(btn.dataset.renameId, btn.dataset.title);
+      });
+      document.querySelectorAll(".restore-session").forEach(btn => btn.onclick = async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        hiddenSessionIds.delete(btn.dataset.restoreId);
+        saveHiddenSessions();
+        renderSessions();
       });
     }
     function nearBottom(el) {
@@ -417,7 +842,7 @@ INDEX_HTML = r"""<!doctype html>
       const keepBottom = forceScrollBottom || stickToBottom || nearBottom(list);
       const distanceFromBottom = list.scrollHeight - list.scrollTop - list.clientHeight;
       const active = sessions.find(s => s.id === activeId);
-      qs("#threadTitle").textContent = active ? (active.title || active.id) : "选择一个会话";
+      qs("#threadTitle").textContent = active ? sessionTitle(active) : "选择一个会话";
       const activeJobs = [
         ...Object.values(jobs),
         ...uiEvents
@@ -437,17 +862,34 @@ INDEX_HTML = r"""<!doctype html>
           const m = row.data;
           return `
         <div class="msg ${m.role === "user" ? "user" : "assistant"}">
-          <span class="role">${m.role === "user" ? "你" : "Codex"} · ${escapeHtml(fmt(m.timestamp))}</span>${escapeHtml(m.text)}
+          <button class="msg-copy" type="button" data-copy-text="${attrJson(m.text)}" title="复制内容">⧉</button>
+          <span class="role">${m.role === "user" ? "你" : "Codex"} · ${escapeHtml(fmt(m.timestamp))}</span><span class="content">${markdown(m.text)}</span>
         </div>`;
         }
         const j = row.data;
         const body = [j.message || "", j.output || ""].filter(Boolean).join("\n\n") || "没有详细错误信息。";
         return `
         <div class="msg job ${j.status === "failed" ? "failed" : ""}">
-          <span class="role">网页任务 · ${escapeHtml(jobLabel(j))}</span>${escapeHtml(body)}
+          <button class="msg-copy" type="button" data-copy-text="${attrJson(body)}" title="复制内容">⧉</button>
+          <span class="role">网页任务 · ${escapeHtml(jobLabel(j))}</span><span class="content">${markdown(body)}</span>
         </div>`;
       }).join("");
       list.innerHTML = html;
+      document.querySelectorAll(".msg-copy").forEach(btn => btn.onclick = async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          await copyText(JSON.parse(btn.dataset.copyText || "\"\""));
+          btn.classList.add("done");
+          btn.textContent = "✓";
+          setTimeout(() => {
+            btn.classList.remove("done");
+            btn.textContent = "⧉";
+          }, 1200);
+        } catch (err) {
+          addUiError("复制失败：" + (err.message || String(err)));
+        }
+      });
       if (keepBottom) {
         list.scrollTop = list.scrollHeight;
         stickToBottom = true;
@@ -473,18 +915,23 @@ INDEX_HTML = r"""<!doctype html>
       sessions = await sessionsRes.json();
       loadedThreadIds = loadedRes.ok ? (await loadedRes.json()).thread_ids || [] : [];
       currentSessionId = loadedThreadIds.find(id => sessions.some(s => s.id === id)) || "";
+      const firstVisible = sessions.find(s => !hiddenSessionIds.has(s.id));
+      const currentVisible = currentSessionId && !hiddenSessionIds.has(currentSessionId) ? currentSessionId : "";
       if (firstSessionLoad && !explicitSessionId) {
-        activeId = currentSessionId || (sessions[0] && sessions[0].id) || activeId;
+        activeId = currentVisible || (firstVisible && firstVisible.id) || activeId;
         if (activeId) localStorage.setItem("codexMobileSession", activeId);
-      } else if ((firstSessionLoad && currentSessionId && explicitSessionId === currentSessionId) || !sessions.some(s => s.id === activeId)) {
-        activeId = currentSessionId || (sessions[0] && sessions[0].id) || "";
+      } else if ((firstSessionLoad && currentVisible && explicitSessionId === currentVisible) || hiddenSessionIds.has(activeId) || !sessions.some(s => s.id === activeId)) {
+        activeId = currentVisible || (firstVisible && firstVisible.id) || "";
         if (activeId) localStorage.setItem("codexMobileSession", activeId);
       }
       firstSessionLoad = false;
       renderSessions();
     }
     async function loadMessages() {
-      if (!activeId) return;
+      if (!activeId) {
+        renderMessages([]);
+        return;
+      }
       const res = await api("/api/messages?session_id=" + encodeURIComponent(activeId));
       if (!res.ok) throw new Error(await res.text());
       renderMessages(await res.json());
@@ -562,10 +1009,139 @@ INDEX_HTML = r"""<!doctype html>
     function escapeHtml(x) {
       return String(x || "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
     }
+    function attrJson(value) {
+      return escapeHtml(JSON.stringify(String(value || "")));
+    }
+    function inlineMarkdown(text) {
+      return escapeHtml(text)
+        .replace(/`([^`]+)`/g, "<code>$1</code>")
+        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+        .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+        .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+    }
+    function tableCells(line) {
+      let s = line.trim();
+      if (!s.includes("|")) return null;
+      if (s.startsWith("|")) s = s.slice(1);
+      if (s.endsWith("|")) s = s.slice(0, -1);
+      return s.split("|").map(cell => cell.trim());
+    }
+    function isTableSeparator(line) {
+      const cells = tableCells(line);
+      return !!cells && cells.length > 1 && cells.every(cell => /^:?-{3,}:?$/.test(cell));
+    }
+    function renderTable(lines) {
+      const header = tableCells(lines[0]) || [];
+      const rows = lines.slice(2).map(line => tableCells(line) || []);
+      const head = `<thead><tr>${header.map(cell => `<th>${inlineMarkdown(cell)}</th>`).join("")}</tr></thead>`;
+      const body = `<tbody>${rows.map(row => `<tr>${header.map((_, i) => `<td>${inlineMarkdown(row[i] || "")}</td>`).join("")}</tr>`).join("")}</tbody>`;
+      return `<div class="table-wrap"><table>${head}${body}</table></div>`;
+    }
+    function markdown(text) {
+      const src = String(text || "").replace(/\r\n/g, "\n");
+      const blocks = [];
+      const token = "\u0000CODEBLOCK";
+      let body = src.replace(/```(\w+)?\n([\s\S]*?)```/g, (_, lang, code) => {
+        const i = blocks.length;
+        blocks.push(`<pre><code>${escapeHtml(code.replace(/\n$/, ""))}</code></pre>`);
+        return `${token}${i}\u0000`;
+      });
+      const lines = body.split("\n");
+      const out = [];
+      let list = null;
+      const closeList = () => {
+        if (list) {
+          out.push(`</${list}>`);
+          list = null;
+        }
+      };
+      for (let idx = 0; idx < lines.length; idx++) {
+        const line = lines[idx];
+        const blockMatch = line.match(new RegExp("^" + token + "(\\d+)\\u0000$"));
+        if (blockMatch) {
+          closeList();
+          out.push(blocks[Number(blockMatch[1])] || "");
+          continue;
+        }
+        if (!line.trim()) {
+          closeList();
+          continue;
+        }
+        if (idx + 1 < lines.length && tableCells(line)?.length > 1 && isTableSeparator(lines[idx + 1])) {
+          closeList();
+          const tableLines = [line, lines[idx + 1]];
+          idx += 2;
+          while (idx < lines.length && tableCells(lines[idx])?.length > 1 && lines[idx].trim()) {
+            tableLines.push(lines[idx]);
+            idx++;
+          }
+          idx--;
+          out.push(renderTable(tableLines));
+          continue;
+        }
+        const heading = line.match(/^(#{1,3})\s+(.+)$/);
+        if (heading) {
+          closeList();
+          const level = heading[1].length;
+          out.push(`<h${level}>${inlineMarkdown(heading[2])}</h${level}>`);
+          continue;
+        }
+        const quote = line.match(/^>\s?(.*)$/);
+        if (quote) {
+          closeList();
+          out.push(`<blockquote>${inlineMarkdown(quote[1])}</blockquote>`);
+          continue;
+        }
+        const unordered = line.match(/^\s*[-*]\s+(.+)$/);
+        if (unordered) {
+          if (list !== "ul") {
+            closeList();
+            list = "ul";
+            out.push("<ul>");
+          }
+          out.push(`<li>${inlineMarkdown(unordered[1])}</li>`);
+          continue;
+        }
+        const ordered = line.match(/^\s*\d+\.\s+(.+)$/);
+        if (ordered) {
+          if (list !== "ol") {
+            closeList();
+            list = "ol";
+            out.push("<ol>");
+          }
+          out.push(`<li>${inlineMarkdown(ordered[1])}</li>`);
+          continue;
+        }
+        closeList();
+        out.push(`<p>${inlineMarkdown(line)}</p>`);
+      }
+      closeList();
+      return out.join("");
+    }
     qs("#refreshBtn").onclick = refreshAll;
+    qs("#sessionRefreshBtn").onclick = async (e) => {
+      e.preventDefault();
+      await refreshAll();
+    };
     qs("#sendBtn").onclick = sendMessage;
     qs("#terminalBtn").onclick = startTerminal;
     qs("#menuBtn").onclick = () => qs("#sidebar").classList.toggle("open");
+    qs("#sidebarResizer").addEventListener("pointerdown", e => {
+      if (window.matchMedia("(max-width: 760px)").matches) return;
+      e.preventDefault();
+      const move = ev => {
+        const width = Math.max(320, Math.min(640, ev.clientX));
+        const value = width + "px";
+        document.documentElement.style.setProperty("--sidebar-width", value);
+        localStorage.setItem("codexMobileSidebarWidth", value);
+      };
+      const up = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+    });
     qs("#messages").addEventListener("scroll", () => {
       stickToBottom = nearBottom(qs("#messages"));
     }, {passive: true});
@@ -595,13 +1171,26 @@ def db_connect():
     return sqlite3.connect(f"file:{STATE_DB}?mode=ro", uri=True)
 
 
+def db_write_connect():
+    return sqlite3.connect(STATE_DB)
+
+
 def list_sessions():
     conn = db_connect()
     conn.row_factory = sqlite3.Row
     try:
+        columns = {row[1] for row in conn.execute("pragma table_info(threads)").fetchall()}
+        preview_expr = "preview" if "preview" in columns else "first_user_message"
+        archived_expr = "archived" if "archived" in columns else "0"
+        updated_expr = (
+            "coalesce(updated_at_ms, updated_at * 1000, created_at_ms, created_at * 1000, 0)"
+        )
         rows = conn.execute(
-            """
-            select id, title, rollout_path, cwd, updated_at_ms, preview, archived
+            f"""
+            select id, title, rollout_path, cwd,
+                   {updated_expr} as updated_at_ms,
+                   {preview_expr} as preview,
+                   {archived_expr} as archived
             from threads
             order by updated_at_ms desc
             limit 200
@@ -632,6 +1221,25 @@ def get_session(session_id):
             (session_id,),
         ).fetchone()
         return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def update_session_title(session_id, title):
+    title = shorten(title, 180)
+    if not title:
+        raise ValueError("title is required")
+    conn = db_write_connect()
+    try:
+        now_ms = int(time.time() * 1000)
+        cur = conn.execute(
+            "update threads set title = ?, updated_at_ms = ? where id = ?",
+            (title, now_ms, session_id),
+        )
+        if cur.rowcount == 0:
+            raise ValueError("unknown session")
+        conn.commit()
+        return {"session_id": session_id, "title": title, "updated_at_ms": now_ms}
     finally:
         conn.close()
 
@@ -1015,6 +1623,7 @@ def ensure_remote_control():
     proc = subprocess.run(
         [CODEX_BIN, "remote-control", "start", "--json"],
         text=True,
+        env=codex_env(),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         cwd=str(HOME),
@@ -1119,6 +1728,7 @@ def run_codex_job(job_id, session_id, message):
             cmd,
             input=message,
             text=True,
+            env=codex_env(),
             cwd=str(HOME),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -1252,7 +1862,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self.authorized(params):
             self.send_text("unauthorized", 401)
             return
-        if path not in {"/api/send", "/api/remote/start", "/api/remote/send", "/api/inputbox/result"}:
+        if path not in {"/api/send", "/api/remote/start", "/api/remote/send", "/api/inputbox/result", "/api/session/title"}:
             self.send_text("not found", 404)
             return
         length = int(self.headers.get("Content-Length", "0"))
@@ -1279,6 +1889,17 @@ class Handler(BaseHTTPRequestHandler):
                 if job_id in INPUTBOX_QUEUE:
                     INPUTBOX_QUEUE.remove(job_id)
             self.send_json({"job_id": job_id, "status": status})
+            return
+        if path == "/api/session/title":
+            session_id = (data.get("session_id") or "").strip()
+            title = (data.get("title") or "").strip()
+            if not session_id:
+                self.send_text("session_id is required", 400)
+                return
+            try:
+                self.send_json(update_session_title(session_id, title))
+            except Exception as exc:
+                self.send_text(str(exc), 400)
             return
         if path == "/api/remote/start":
             try:
